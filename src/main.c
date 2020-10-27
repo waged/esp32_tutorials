@@ -40,8 +40,6 @@ void task2(void* params) // never executed!!
 void app_main()
 {
     //FreeRTOS example to show Multitasking
-    // task1();
-    // task2();
 
     //friendly name of the task
     // how much memory you want to keep it for this task
