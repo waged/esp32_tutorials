@@ -48,7 +48,7 @@ void app_main()
     // send parameters NULL for no passing
     // piriority 1 lowest  5 highest
     // update modify delete this task
-    
+
     xTaskCreate(&task1, "counter 1", 2048, "task 1", 2, NULL); //passing parameter task 1
     xTaskCreate(&task2, "counter 2", 2048, "task 2", 2, NULL); //passing parameter task 2
 }
