@@ -5,6 +5,11 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include "user.h"
+#include <freertos/event_groups.h>
+
+EventGroupHandle_t evtGpHandle;
+const int gotTask1 = BIT0;
+const int gotTask2 = BIT1;
 
 User user;
 xQueueHandle qHandler;
@@ -17,51 +22,50 @@ void updateUser(char *name, char *address, int age)
 
 void task1(void *params)
 {
-    int count = 0;
     while (1)
     {
-        count++;
+
+        printf("%s running ...\n", (char *)params);
+        xEventGroupSetBits(evtGpHandle, gotTask1);
+        // updateUser("Tailor", "China", 32);
+        // setUser(user);
+        // User *getuser = getUser();
+        // printf("name1: %s, ", getuser->name);
+        // printf("addr1: %s, ", getuser->address);
+        // printf("age1: %d\n", getuser->age);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
-        long ok = xQueueSend(qHandler, &count, 1000 / portTICK_PERIOD_MS);
-        if (ok)
-        {
-            printf("\n%s added msg to queue \n", (char *)params);
-            updateUser("Tailor", "China", 32);
-            setUser(user);
-            User *getuser = getUser();
-            printf("name1: %s, ", getuser->name);
-            printf("addr1: %s, ", getuser->address);
-            printf("age1: %d\n", getuser->age);
-        }
-        else
-        {
-            printf("%s :Failed to add message to Queue\n", (char *)params);
-        }
     }
 }
 void task2(void *params)
 {
     while (1)
     {
-        int rxCount;
-        if (xQueueReceive(qHandler, &rxCount, 5000 / portTICK_PERIOD_MS))
-        {
-        printf("\n%s running and got number %d \n", (char *)params, rxCount);
-        updateUser("James", "USA", 26);
-        setUser(user);
-        User *getuser = getUser();
-        printf("name2: %s, ", getuser->name);
-        printf("addr2: %s, ", getuser->address);
-        printf("age2: %d\n", getuser->age);
-        }
-      
+        printf("%s running ...\n", (char *)params);
+        xEventGroupSetBits(evtGpHandle, gotTask2);
+        // updateUser("James", "USA", 26);
+        // setUser(user);
+        // User *getuser = getUser();
+        // printf("name2: %s, ", getuser->name);
+        // printf("addr2: %s, ", getuser->address);
+        // printf("age2: %d\n", getuser->age);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+}
+
+void task3(void *params)
+{
+    while (1)
+    {
+        xEventGroupWaitBits(evtGpHandle, gotTask1 | gotTask2, true, true, portMAX_DELAY);
+        printf("Received some stuff from task 1 or task2! \n");
     }
 }
 
 void app_main()
 {
-    qHandler = xQueueCreate(3, sizeof(int));
+    evtGpHandle = xEventGroupCreate();
     xTaskCreate(&task1, "counter 1", 2048, "Task 1", 2, NULL); //passing parameter task 1
     xTaskCreate(&task2, "counter 2", 2048, "Task 2", 2, NULL); //passing parameter task 2
+    xTaskCreate(&task3, "counter 3", 2048, "Task 3", 2, NULL); //passing parameter task 3
     // xTaskCreatePinnedToCore(&task2, "counter 2", 2048, "task 2", 2, NULL, 1); //create task in the second core of ESP32  - 2 core capability
 }
