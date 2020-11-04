@@ -12,6 +12,7 @@ char *TAG = "CONNECTION";
 
 xSemaphoreHandle connectBinSemaphore;
 bool isWifiConnectedWithIp = false;
+bool isHttpCalledCalled = false;
 
 esp_err_t clientEvent(esp_http_client_event_t *evt)
 {
@@ -28,13 +29,14 @@ esp_err_t clientEvent(esp_http_client_event_t *evt)
         break;
     case HTTP_EVENT_ON_HEADER:
         ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER");
-        // printf("%.*s", evt->data_len, (char *)evt->data);
+        printf("%.*s", evt->data_len, (char *)evt->data);
         break;
     case HTTP_EVENT_ON_DATA:
         // ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
         // if (!esp_http_client_is_chunked_response(evt->client))
         // {
-            printf("%.*s", evt->data_len, (char *)evt->data);
+        printf("%.*s", evt->data_len, (char *)evt->data);
+        isHttpCalledCalled = true;
         // }
         break;
     case HTTP_EVENT_ON_FINISH:
@@ -83,7 +85,7 @@ void OnConnected(void *para)
         if (xSemaphoreTake(connectBinSemaphore, 10000 / portTICK_RATE_MS))
         {
             ESP_LOGI(TAG, "connected");
-            xSemaphoreTake(connectBinSemaphore, portMAX_DELAY);  //release this thread so we can make sure that CPU never perform any further process.
+            xSemaphoreTake(connectBinSemaphore, portMAX_DELAY); //release this thread so we can make sure that CPU never perform any further process.
         }
         else
         {
@@ -120,21 +122,27 @@ void app_main()
     connectBinSemaphore = xSemaphoreCreateBinary();
     wifiInit();
     xTaskCreate(&OnConnected, "Handel WiFi", 1024 * 3, NULL, 5, NULL);
-    // while (1)
-    // {
-    //     if (isWifiConnectedWithIp)
-    //     {
-    //         esp_http_client_config_t clientConfig = {
-    //             .url = "http://google.com",
-    //             .event_handler = clientEvent
+    while (1)
+    {
+        if (isWifiConnectedWithIp && !isHttpCalledCalled)
+        {
+            esp_http_client_config_t clientConfig = {
+                .url = "https://google.com",
+                .event_handler = clientEvent
 
-    //         };
-    //         esp_http_client_handle_t client = esp_http_client_init(&clientConfig);
-    //         esp_http_client_perform(client);
-    //         esp_http_client_cleanup(client);
-            
-    //     }
-    //     vTaskDelay(4000 / portTICK_PERIOD_MS);
-    //     printf("Checking internet flag .... \n");
-    // }
+            };
+            esp_http_client_handle_t client = esp_http_client_init(&clientConfig);
+            esp_http_client_perform(client);
+            esp_http_client_cleanup(client);
+        }
+        if (isHttpCalledCalled)
+        {
+            printf("HTTP Request done !!! \n");
+        }
+        else
+        {
+            printf("Checking internet flag .... \n");
+        }
+        vTaskDelay(4000 / portTICK_PERIOD_MS);
+    }
 }
