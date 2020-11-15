@@ -2,147 +2,128 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
-#include "esp_event_loop.h"
-#include "esp_wifi.h"
-#include "esp_log.h"
+#include "esp_event.h" //"esp_event_loop.h"
 #include "nvs_flash.h"
-#include "esp_http_client.h"
+#include "esp_log.h"
+#include "esp_nimble_hci.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "host/ble_hs.h"
+#include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
+#include "sdkconfig.h"
 
-char *TAG = "CONNECTION";
+char *TAG = "BLE-CONNECTION";
+#define BLE_NAME "WEGZ-BLE"
+uint8_t ble_addr_type;
 
-xSemaphoreHandle connectBinSemaphore;
-bool isWifiConnectedWithIp = false;
-bool isHttpCalledCalled = false;
+void ble_app_advertise(void);
 
-esp_err_t clientEvent(esp_http_client_event_t *evt)
+#define DEVICE_INFO_SERVICE 0x180A
+#define MANUFACTURER_NAME_CHAR 0x2A29
+
+static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    switch (evt->event_id)
-    {
-    case HTTP_EVENT_ERROR:
-        ESP_LOGI(TAG, "HTTP_EVENT_ERROR");
-        break;
-    case HTTP_EVENT_ON_CONNECTED:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
-        break;
-    case HTTP_EVENT_HEADER_SENT:
-        ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
-        break;
-    case HTTP_EVENT_ON_HEADER:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER");
-        printf("%.*s", evt->data_len, (char *)evt->data);
-        break;
-    case HTTP_EVENT_ON_DATA:
-        // ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-        // if (!esp_http_client_is_chunked_response(evt->client))
-        // {
-        printf("%.*s", evt->data_len, (char *)evt->data);
-        isHttpCalledCalled = true;
-        // }
-        break;
-    case HTTP_EVENT_ON_FINISH:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
-        break;
-    case HTTP_EVENT_DISCONNECTED:
-        ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
-        break;
-    }
-    return ESP_OK;
+    printf("incoming message: %.*s\n", ctxt->om->om_len, ctxt->om->om_data);
+    return 0;
+}
+static int device_info(uint16_t con_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    printf("BLE RECV MSG: %.*s \n", ctxt->om->om_len, ctxt->om->om_data);
+    return 0;
 }
 
-static esp_err_t event_handler(void *ctx, system_event_t *event)
+static const struct ble_gatt_svc_def gatt_svcs[] = {
+    {.type = BLE_GATT_SVC_TYPE_PRIMARY,
+     .uuid = BLE_UUID16_DECLARE(DEVICE_INFO_SERVICE),
+     .characteristics = (struct ble_gatt_chr_def[]){
+         {.uuid = BLE_UUID16_DECLARE(MANUFACTURER_NAME_CHAR),
+          .flags = BLE_GATT_CHR_F_READ,
+          .access_cb = device_info},
+         {.uuid = BLE_UUID128_DECLARE(0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff),
+          .flags = BLE_GATT_CHR_F_WRITE,
+          .access_cb = device_write},
+         {0}}},
+    {0}};
+static int ble_gap_event(struct ble_gap_event *event, void *arg)
 {
-    switch (event->event_id)
+    switch (event->type)
     {
-    case SYSTEM_EVENT_STA_START:
-        esp_wifi_connect();
-        ESP_LOGI(TAG, "connecting...\n");
+    case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI("GAP", "BLE GAP EVENT CONNECT %s", event->connect.status == 0 ? "OK!" : "FAILED!");
+        if (event->connect.status != 0)
+        {
+            //start advertising again!
+            ble_app_advertise();
+        }
         break;
-
-    case SYSTEM_EVENT_STA_CONNECTED:
-        ESP_LOGI(TAG, "connected\n");
+    case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
+        ble_app_advertise();
         break;
-
-    case SYSTEM_EVENT_STA_GOT_IP:
-        ESP_LOGI(TAG, "got ip\n");
-        isWifiConnectedWithIp = true;
-        xSemaphoreGive(connectBinSemaphore); //this will call directly the OnConnected Function!
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
+        ble_app_advertise();
         break;
-
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-        ESP_LOGI(TAG, "disconnected\n");
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
         break;
-
     default:
         break;
     }
-    return ESP_OK;
+    return 0;
 }
 
-void OnConnected(void *para)
+void ble_app_advertise(void)
 {
-    while (true)
-    {
-        if (xSemaphoreTake(connectBinSemaphore, 10000 / portTICK_RATE_MS))
-        {
-            ESP_LOGI(TAG, "connected");
-            xSemaphoreTake(connectBinSemaphore, portMAX_DELAY); //release this thread so we can make sure that CPU never perform any further process.
-        }
-        else
-        {
-            ESP_LOGE(TAG, "Failed to connect. Retry in");
-            for (int i = 0; i < 5; i++)
-            {
-                ESP_LOGE(TAG, "...%d", i);
-                vTaskDelay(1000 / portTICK_RATE_MS);
-            }
-            esp_restart();
-        }
-    }
+    // struct ble_hs_adv_fields fields = (struct ble_hs_adv_fields){0};
+    struct ble_hs_adv_fields fields;
+    memset(&fields, 0, sizeof(fields));
+    // ble_eddystone_set_adv_data_url(&fields,
+    //                                BLE_EDDYSTONE_URL_SCHEME_HTTPS,
+    //                                "google",
+    //                                strlen("google"),
+    //                                BLE_EDDYSTONE_URL_SUFFIX_COM,
+    //                                -30);
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_DISC_LTD;
+    fields.tx_pwr_lvl_is_present = 1;
+    fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
+    fields.name = (uint8_t *)ble_svc_gap_device_name();
+    fields.name_len = strlen(ble_svc_gap_device_name());
+    fields.name_is_complete = 1;
+    ble_gap_adv_set_fields(&fields);
+    struct ble_gap_adv_params adv_params;
+    memset(&adv_params, 0, sizeof(adv_params));
+    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    ble_gap_adv_start(ble_addr_type, NULL, BLE_HS_FOREVER, &adv_params, ble_gap_event, NULL);
 }
 
-void wifiInit()
+void ble_app_on_sync(void)
 {
-    ESP_ERROR_CHECK(nvs_flash_init());
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
-    wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_config));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    wifi_config_t wifi_config =
-        {
-            .sta = {
-                .ssid = "Waged's iPhone",
-                .password = "wegzwegz"}};
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // ble_addr_t addr;
+    // ble_hs_id_gen_rnd(1, &addr);
+    // ble_hs_id_set_rnd(addr.val);
+    ble_hs_id_infer_auto(0, &ble_addr_type);
+    ble_app_advertise();
 }
+
+void host_task(void *param)
+{
+    nimble_port_run();
+}
+
+//BLE
 void app_main()
 {
-    esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    connectBinSemaphore = xSemaphoreCreateBinary();
-    wifiInit();
-    xTaskCreate(&OnConnected, "Handel WiFi", 1024 * 3, NULL, 5, NULL);
-    while (1)
-    {
-        if (isWifiConnectedWithIp && !isHttpCalledCalled)
-        {
-            esp_http_client_config_t clientConfig = {
-                .url = "https://google.com",
-                .event_handler = clientEvent
-
-            };
-            esp_http_client_handle_t client = esp_http_client_init(&clientConfig);
-            esp_http_client_perform(client);
-            esp_http_client_cleanup(client);
-        }
-        if (isHttpCalledCalled)
-        {
-            printf("HTTP Request done !!! \n");
-        }
-        else
-        {
-            printf("Checking internet flag .... \n");
-        }
-        vTaskDelay(4000 / portTICK_PERIOD_MS);
-    }
+    nvs_flash_init();
+    esp_nimble_hci_and_controller_init();
+    nimble_port_init();
+    ESP_ERROR_CHECK(ble_svc_gap_device_name_set(BLE_NAME));
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+    ble_gatts_count_cfg(gatt_svcs);
+    ble_gatts_add_svcs(gatt_svcs);
+    ble_hs_cfg.sync_cb = ble_app_on_sync;
+    nimble_port_freertos_init(host_task);
 }
