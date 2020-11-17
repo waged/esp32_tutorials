@@ -11,6 +11,7 @@
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "cJSON.h"
 #include "sdkconfig.h"
 
 char *TAG = "BLE-CONNECTION";
@@ -24,9 +25,16 @@ void ble_app_advertise(void);
 
 static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    printf("incoming message: %.*s\n", ctxt->om->om_len, ctxt->om->om_data);
+    // data pattern {"SSID":"YOUR_WIFI_NAME", "PSK":"YOUR_WIFI_PASS"}
+    char *incoming_data = (char *)ctxt->om->om_data;
+    printf("incoming message: %s\n", incoming_data);
+    cJSON *payload = cJSON_Parse(incoming_data);
+    cJSON *ssid = cJSON_GetObjectItem(payload, "SSID");
+    cJSON *psk = cJSON_GetObjectItem(payload, "PSK");
+    printf("WiFi Credentials SSID:(%s) & PSK: (%s)\n", ssid->valuestring, psk->valuestring);
     return 0;
 }
+
 static int device_info(uint16_t con_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     printf("BLE RECV MSG: %.*s \n", ctxt->om->om_len, ctxt->om->om_data);
@@ -76,15 +84,8 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
 
 void ble_app_advertise(void)
 {
-    // struct ble_hs_adv_fields fields = (struct ble_hs_adv_fields){0};
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
-    // ble_eddystone_set_adv_data_url(&fields,
-    //                                BLE_EDDYSTONE_URL_SCHEME_HTTPS,
-    //                                "google",
-    //                                strlen("google"),
-    //                                BLE_EDDYSTONE_URL_SUFFIX_COM,
-    //                                -30);
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_DISC_LTD;
     fields.tx_pwr_lvl_is_present = 1;
     fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
