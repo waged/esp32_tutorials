@@ -14,8 +14,10 @@
 #include "cJSON.h"
 #include "sdkconfig.h"
 
-#define DEVICE_INFO_SERVICE 0x180A
-#define MANUFACTURER_NAME_CHAR 0x2A29
+
+#define DEVICE_INFO_SERVICE_UUID 0x180A
+
+#define MANUFACTURER_NAME_CHAR 0xFEF4
 #define BLE_NAME "IoT-BLE"
 
 char *TAG = "BLE-CONNECTION";
@@ -27,10 +29,10 @@ char* wifi_psk ;
 
 void ble_app_advertise(void);
 
-
+// callback from characteristic 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
 static int device_write(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    // data pattern {"SSID":"YOUR_WIFI_NAME", "PSK":"YOUR_WIFI_PASS"}
+    // data pattern {"SSID":"PUT_YOUR_WIFI_NAME", "PSK":"PUT_YOUR_WIFI_PASS"}
     char *incoming_data = (char *)ctxt->om->om_data;
     printf("incoming message: %s\n", incoming_data);
     cJSON *payload = cJSON_Parse(incoming_data);
@@ -48,7 +50,7 @@ static int device_info(uint16_t con_handle, uint16_t attr_handle, struct ble_gat
 }
 static const struct ble_gatt_svc_def gatt_svcs[] = {
     {.type = BLE_GATT_SVC_TYPE_PRIMARY,
-     .uuid = BLE_UUID16_DECLARE(DEVICE_INFO_SERVICE),
+     .uuid = BLE_UUID16_DECLARE(DEVICE_INFO_SERVICE_UUID),
      .characteristics = (struct ble_gatt_chr_def[]){
          {.uuid = BLE_UUID16_DECLARE(MANUFACTURER_NAME_CHAR),
           .flags = BLE_GATT_CHR_F_READ,
@@ -125,11 +127,11 @@ void app_main()
     nvs_flash_init();
     esp_nimble_hci_and_controller_init();   //initialize bluetooth controller.
     nimble_port_init(); //nimble library initialization.
-    ESP_ERROR_CHECK(ble_svc_gap_device_name_set(BLE_NAME)); //set BLE name. 
+    ESP_ERROR_CHECK(ble_svc_gap_device_name_set(BLE_NAME)); //set BLE name.
     ble_svc_gap_init(); //initialize the gap service.
     ble_svc_gatt_init(); //initailize the gatt service.
     ble_gatts_count_cfg(gatt_svcs); // config all the gatt services that wanted to be used.
     ble_gatts_add_svcs(gatt_svcs);  // queues all services.
-    ble_hs_cfg.sync_cb = ble_app_on_sync; 
+    ble_hs_cfg.sync_cb = ble_app_on_sync;
     nimble_port_freertos_init(host_task);
 }
